@@ -1,6 +1,7 @@
 
 
 #include <math.h>
+#include "codec_wm8904.h"
 
 uint8_t wmcodec_write( uint8_t reg, uint16_t data )
 {
@@ -25,6 +26,31 @@ uint8_t wmcodec_write( uint8_t reg, uint16_t data )
 #endif
 	return 0;
 }
+
+uint16_t wmcodec_read(uint16_t reg) {
+#ifndef EMU
+	uint16_t return_value = 0;
+	int attempt;
+	HAL_Delay(1);
+	for (attempt = 0; attempt < 10; ++attempt) {
+		HAL_StatusTypeDef r = HAL_I2C_Mem_Read(&hi2c2, 0x34, reg, I2C_MEMADD_SIZE_8BIT, (uint8_t*) &return_value, 2, I2C_TIMEOUT);
+
+		if (r == HAL_OK)
+			return_value = ((return_value << 8) & 0xff00) | ((return_value >> 8) & 0x00ff);
+		break;
+		HAL_Delay(10);
+	}
+	if (attempt == 100) {
+		DebugLog("error in wmcodec_read reg %d return_value %d\r\n", reg, return_value);
+	} else {
+//    	DebugLog("codec write ok after %d attempts!\r\n", attempt+1);
+	}
+	return return_value;
+#endif
+	return 0;
+
+}
+
 
 
 // datasheet constants transcribed via https://github.com/mguentner/rockbox/blob/master/firmware/drivers/audio/wm8758.c
@@ -310,6 +336,7 @@ void uitick(u32 *dst, const u32 *src, int half);
 static short txbuf[BLOCK_SAMPLES*4];
 static short rxbuf[BLOCK_SAMPLES*4];
 short* getrxbuf(void) { return rxbuf; }
+bool wm9804 = false;
 
 #ifndef EMU
 
@@ -329,11 +356,13 @@ void codec_setheadphonevol(int vol) {
 	vol = clampi(vol, 0, 63);
 	if (vol == curhpvol) return;
 	curhpvol = vol;
+	return;
 	wmcodec_write(LOUT1VOL, 0x000 + vol);
 	wmcodec_write(ROUT1VOL, 0x100 + vol);
 }
 
 void codec_init(void) {
+	uint16_t data = 0;
 	//  for (int i=0;i<N*4;++i)
 	//	  txbuf[i]=32767.f * sinf(i*3.141592f/2.f/N);
 #ifndef EMU
@@ -347,7 +376,38 @@ void codec_init(void) {
 		}
 #endif
 		HAL_Delay(1);
-    wmcodec_write(0,0);
+		wmcodec_write(0,0);
+		data = wmcodec_read(WM8904_SW_RESET_AND_ID);
+					if (data == 0x8904) {
+						wm9804 = true;
+						wmcodec_write(0x16, WM8904_CLK_SYS_ENA | WM8904_OPCLK_ENA | WM8904_CLK_DSP_ENA);
+						wmcodec_write(0x79, 0x1);
+
+						wmcodec_write(0x6C, 0x0100);
+						wmcodec_write(0x6F, 0x0100);
+						wmcodec_write(0x14, 0x845E);
+						wmcodec_write(0x39, 0x0039);
+						wmcodec_write(0x3A, 0x00B9);
+						wmcodec_write(0x21, 0x0000);
+						wmcodec_write(0x62, 0x0001);
+						wmcodec_write(0x68, 0x0001);
+
+						wmcodec_write(WM8904_AUDIO_INTERFACE_1, WM8904_AIF_FMT_I2S | WM8904_AIF_WL_16BIT);
+						wmcodec_write(0x15, WM8904_CLK_SYS_RATE(3) | WM8904_SAMPLE_RATE(4));
+						wmcodec_write(0x16, WM8904_CLK_SYS_ENA | WM8904_OPCLK_ENA | WM8904_CLK_DSP_ENA);
+
+						// set line IN
+						wmcodec_write(0x04,0x0009);
+						wmcodec_write(0x05,0x0043);
+						wmcodec_write(0x14,0x845E);
+						wmcodec_write(0x0C,0x0003);
+						wmcodec_write(0x12,WM8904_DACL_ENA|WM8904_DACR_ENA|WM8904_ADCL_ENA|WM8904_ADCR_ENA);
+						wmcodec_write(0x2C,0x0005);
+						wmcodec_write(0x2D,0x0005);
+
+						wmcodec_write(0x2E,WM8904_L_IP_SEL_N_IN2L);
+						wmcodec_write(0x2F,WM8904_R_IP_SEL_N_IN2L);
+					} else {
 	    wmcodec_write(BIASCTRL, BIASCTRL_BIASCUT);
 	    wmcodec_write(OUTCTRL, OUTCTRL_HP_COM | OUTCTRL_LINE_COM
 	                         | OUTCTRL_TSOPCTRL | OUTCTRL_TSDEN | OUTCTRL_VROI);
@@ -423,7 +483,7 @@ void codec_init(void) {
 //		int invol=63; // 6 bits; 16=0db, .75db steps; 63=+35db
 //		wmcodec_write(LINPGAVOL, invol + LINPGAVOL_INPGAVU);
 //		wmcodec_write(RINPGAVOL, invol + RINPGAVOL_INPGAVU);
-
+					}
 }
 
 
